@@ -131,11 +131,6 @@ public class KillbillServerModule extends KillbillPlatformModule {
         }
     }
 
-    @Override
-    protected void configureEmbeddedDB() {
-        embeddedDB = new KillBillEmbeddedDBProvider(daoConfig).get();
-        bind(EmbeddedDB.class).toInstance(embeddedDB);
-    }
 
     @Override
     protected void configureClock() {
