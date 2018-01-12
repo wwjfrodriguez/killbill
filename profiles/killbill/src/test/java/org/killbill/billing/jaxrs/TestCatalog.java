@@ -153,12 +153,12 @@ public class TestCatalog extends TestJaxrsBase {
         Assert.assertEquals(foundBasePlans, allBasePlans);
     }
 
-    @Test(groups = "slow", description = "Try to retrieve a json version of the catalog with an invalid date",
-            expectedExceptions = KillBillClientException.class,
-            expectedExceptionsMessageRegExp = "There is no catalog version that applies for the given date.*")
+    @Test(groups = "slow", description = "Try to retrieve a json version of the catalog with an invalid date")
     public void testCatalogInvalidDate() throws Exception {
         final List<Catalog> catalogsJson = killBillClient.getJSONCatalog(DateTime.parse("2008-01-01"), requestOptions);
-        Assert.fail();
+        Assert.assertEquals(catalogsJson.size(), 1);
+        // Return the oldest catalog
+        Assert.assertEquals(catalogsJson.get(0).getEffectiveDate().compareTo(new DateTime(2011, 1, 1, 0, 0).toDate()), 0);
     }
 
     @Test(groups = "slow", description = "Can create a simple Plan into a per-tenant catalog")
