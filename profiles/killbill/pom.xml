@@ -21,7 +21,7 @@
     <parent>
         <artifactId>killbill-profiles</artifactId>
         <groupId>org.kill-bill.billing</groupId>
-        <version>0.19.7-SNAPSHOT</version>
+        <version>0.19.16-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>killbill-profiles-killbill</artifactId>
@@ -262,8 +262,7 @@
         </dependency>
         <dependency>
             <groupId>org.kill-bill.billing</groupId>
-            <artifactId>killbill-client-java-swagger-gen-exp</artifactId>
-            <version>0.0.4</version>
+            <artifactId>killbill-client-java</artifactId>
         </dependency>
         <dependency>
             <groupId>org.kill-bill.billing</groupId>

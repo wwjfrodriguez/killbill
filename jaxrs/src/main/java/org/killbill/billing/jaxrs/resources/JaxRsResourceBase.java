@@ -60,6 +60,7 @@ import org.killbill.billing.entitlement.api.SubscriptionApi;
 import org.killbill.billing.entitlement.api.SubscriptionApiException;
 import org.killbill.billing.invoice.api.InvoicePayment;
 import org.killbill.billing.invoice.api.InvoicePaymentType;
+import org.killbill.billing.jaxrs.json.AuditLogJson;
 import org.killbill.billing.jaxrs.json.BillingExceptionJson;
 import org.killbill.billing.jaxrs.json.BillingExceptionJson.StackTraceElementJson;
 import org.killbill.billing.jaxrs.json.BlockingStateJson;
@@ -88,6 +89,7 @@ import org.killbill.billing.util.api.TagDefinitionApiException;
 import org.killbill.billing.util.api.TagUserApi;
 import org.killbill.billing.util.audit.AccountAuditLogsForObjectType;
 import org.killbill.billing.util.audit.AuditLog;
+import org.killbill.billing.util.audit.AuditLogWithHistory;
 import org.killbill.billing.util.callcontext.CallContext;
 import org.killbill.billing.util.callcontext.TenantContext;
 import org.killbill.billing.util.customfield.CustomField;
@@ -376,7 +378,7 @@ public abstract class JaxRsResourceBase implements JaxrsResource {
         }
     }
 
-    protected Response completeTransactionInternal(final PaymentTransactionJson json,
+    protected void completeTransactionInternal(final PaymentTransactionJson json,
                                                    final Payment initialPayment,
                                                    final List<String> paymentControlPluginNames,
                                                    final Iterable<PluginProperty> pluginProperties,
@@ -399,41 +401,38 @@ public abstract class JaxRsResourceBase implements JaxrsResource {
                                                                                                  json != null ? json.getTransactionType() : null);
         // If transaction was already completed, return early (See #626)
         if (pendingOrSuccessTransaction.getTransactionStatus() == TransactionStatus.SUCCESS) {
-            return uriBuilder.buildResponse(uriInfo, PaymentResource.class, "getPayment", pendingOrSuccessTransaction.getPaymentId(), request);
+            return;
         }
 
         final PaymentTransaction pendingTransaction = pendingOrSuccessTransaction;
         final PaymentOptions paymentOptions = createControlPluginApiPaymentOptions(paymentControlPluginNames);
-        final Payment result;
         switch (pendingTransaction.getTransactionType()) {
             case AUTHORIZE:
-                result = paymentApi.createAuthorizationWithPaymentControl(account, initialPayment.getPaymentMethodId(), initialPayment.getId(), amount, currency, null,
-                                                                          initialPayment.getExternalKey(), pendingTransaction.getExternalKey(),
-                                                                          pluginProperties, paymentOptions, callContext);
+                paymentApi.createAuthorizationWithPaymentControl(account, initialPayment.getPaymentMethodId(), initialPayment.getId(), amount, currency, null,
+                                                                 initialPayment.getExternalKey(), pendingTransaction.getExternalKey(),
+                                                                 pluginProperties, paymentOptions, callContext);
                 break;
             case CAPTURE:
-                result = paymentApi.createCaptureWithPaymentControl(account, initialPayment.getId(), amount, currency, null, pendingTransaction.getExternalKey(),
-                                                                    pluginProperties, paymentOptions, callContext);
+                paymentApi.createCaptureWithPaymentControl(account, initialPayment.getId(), amount, currency, null, pendingTransaction.getExternalKey(),
+                                                           pluginProperties, paymentOptions, callContext);
                 break;
             case PURCHASE:
-                result = paymentApi.createPurchaseWithPaymentControl(account, initialPayment.getPaymentMethodId(), initialPayment.getId(), amount, currency, null,
-                                                                     initialPayment.getExternalKey(), pendingTransaction.getExternalKey(),
-                                                                     pluginProperties, paymentOptions, callContext);
+                paymentApi.createPurchaseWithPaymentControl(account, initialPayment.getPaymentMethodId(), initialPayment.getId(), amount, currency, null,
+                                                            initialPayment.getExternalKey(), pendingTransaction.getExternalKey(),
+                                                            pluginProperties, paymentOptions, callContext);
                 break;
             case CREDIT:
-                result = paymentApi.createCreditWithPaymentControl(account, initialPayment.getPaymentMethodId(), initialPayment.getId(), amount, currency, null,
-                                                                   initialPayment.getExternalKey(), pendingTransaction.getExternalKey(),
-                                                                   pluginProperties, paymentOptions, callContext);
+                paymentApi.createCreditWithPaymentControl(account, initialPayment.getPaymentMethodId(), initialPayment.getId(), amount, currency, null,
+                                                          initialPayment.getExternalKey(), pendingTransaction.getExternalKey(),
+                                                          pluginProperties, paymentOptions, callContext);
                 break;
             case REFUND:
-                result = paymentApi.createRefundWithPaymentControl(account, initialPayment.getId(), amount, currency, null,
-                                                                   pendingTransaction.getExternalKey(), pluginProperties, paymentOptions, callContext);
+                paymentApi.createRefundWithPaymentControl(account, initialPayment.getId(), amount, currency, null,
+                                                          pendingTransaction.getExternalKey(), pluginProperties, paymentOptions, callContext);
                 break;
             default:
-                return Response.status(Status.PRECONDITION_FAILED).entity("TransactionType " + pendingTransaction.getTransactionType() + " cannot be completed").build();
+                throw new IllegalStateException("TransactionType " + pendingTransaction.getTransactionType() + " cannot be completed");
         }
-        return createPaymentResponse(uriInfo, result, pendingTransaction.getTransactionType(), pendingTransaction.getExternalKey(), request);
-
     }
 
     protected PaymentTransaction lookupPendingOrSuccessTransaction(final Payment initialPayment, @Nullable final UUID transactionId, @Nullable final String transactionExternalKey, @Nullable final TransactionType transactionType) throws PaymentApiException {
@@ -635,10 +634,6 @@ public abstract class JaxRsResourceBase implements JaxrsResource {
         }
     }
 
-    protected void verifyNumberOfElements(int actual, int expected, String errorMessage) {
-        Preconditions.checkArgument(actual == expected, errorMessage);
-    }
-
     protected void logDeprecationParameterWarningIfNeeded(@Nullable final String deprecatedParam, final String... replacementParams) {
         if (deprecatedParam != null) {
             log.warn(String.format("Parameter %s is being deprecated: Instead use parameters %s", deprecatedParam, Joiner.on(",").join(replacementParams)));
@@ -719,5 +714,14 @@ public abstract class JaxRsResourceBase implements JaxrsResource {
 
         // If nothing is found, return the latest transaction of given type
         return Iterables.getFirst(matchingTransactions, null);
+    }
+
+    protected List<AuditLogJson> getAuditLogsWithHistory(List<AuditLogWithHistory> auditLogWithHistory) {
+        return ImmutableList.<AuditLogJson>copyOf(Collections2.transform(auditLogWithHistory, new Function<AuditLogWithHistory, AuditLogJson>() {
+            @Override
+            public AuditLogJson apply(@Nullable final AuditLogWithHistory input) {
+                return new AuditLogJson(input);
+            }
+        }));
     }
 }

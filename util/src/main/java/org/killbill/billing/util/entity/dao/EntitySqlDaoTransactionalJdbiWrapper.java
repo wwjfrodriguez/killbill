@@ -37,10 +37,9 @@ import org.slf4j.LoggerFactory;
  */
 public class EntitySqlDaoTransactionalJdbiWrapper {
 
-    private final Logger logger = LoggerFactory.getLogger(EntitySqlDaoTransactionalJdbiWrapper.class);
+    private static final Logger logger = LoggerFactory.getLogger(EntitySqlDaoTransactionalJdbiWrapper.class);
 
-    private final IDBI dbi;
-    private final IDBI roDbi;
+    private final DBRouterUntyped dbRouter;
     private final Clock clock;
     private final CacheControllerDispatcher cacheControllerDispatcher;
     private final NonEntityDao nonEntityDao;
@@ -48,12 +47,11 @@ public class EntitySqlDaoTransactionalJdbiWrapper {
 
     public EntitySqlDaoTransactionalJdbiWrapper(final IDBI dbi, final IDBI roDbi, final Clock clock, final CacheControllerDispatcher cacheControllerDispatcher,
                                                 final NonEntityDao nonEntityDao, final InternalCallContextFactory internalCallContextFactory) {
-        this.dbi = dbi;
-        this.roDbi = roDbi;
         this.clock = clock;
         this.cacheControllerDispatcher = cacheControllerDispatcher;
         this.nonEntityDao = nonEntityDao;
         this.internalCallContextFactory = internalCallContextFactory;
+        this.dbRouter = new DBRouterUntyped(dbi, roDbi);
     }
 
     public <M extends EntityModelDao> void populateCaches(final M refreshedEntity) {
@@ -82,28 +80,27 @@ public class EntitySqlDaoTransactionalJdbiWrapper {
 
     /**
      * @param <ReturnType>                   object type to return from the transaction
-     * @param ro                             whether to use the read-only connection
+     * @param requestedRO                    hint as whether to use the read-only connection
      * @param entitySqlDaoTransactionWrapper transaction to execute
      * @return result from the transaction fo type ReturnType
      */
-    public <ReturnType> ReturnType execute(final boolean ro, final EntitySqlDaoTransactionWrapper<ReturnType> entitySqlDaoTransactionWrapper) {
+    public <ReturnType> ReturnType execute(final boolean requestedRO, final EntitySqlDaoTransactionWrapper<ReturnType> entitySqlDaoTransactionWrapper) {
         final String debugInfo = logger.isDebugEnabled() ? getDebugInfo() : null;
-        final String debugPrefix = ro ? "RO" : "RW";
 
-        final Handle handle = ro ? roDbi.open() : dbi.open();
-        logger.debug("[{}] DBI handle created, transaction: {}", debugPrefix, debugInfo);
+        final Handle handle = dbRouter.getHandle(requestedRO);
+        logger.debug("DBI handle created, transaction: {}", debugInfo);
         try {
             final EntitySqlDao<EntityModelDao<Entity>, Entity> entitySqlDao = handle.attach(InitialEntitySqlDao.class);
             // The transaction isolation level is now set at the pool level: this avoids 3 roundtrips for each transaction
             // Note that if the pool isn't used (tests or PostgreSQL), the transaction level will depend on the DB configuration
             //return entitySqlDao.inTransaction(TransactionIsolationLevel.READ_COMMITTED, new JdbiTransaction<ReturnType, EntityModelDao<Entity>, Entity>(handle, entitySqlDaoTransactionWrapper));
-            logger.debug("[{}] Starting transaction {}", debugPrefix, debugInfo);
+            logger.debug("Starting transaction {}", debugInfo);
             final ReturnType returnType = entitySqlDao.inTransaction(new JdbiTransaction<ReturnType, EntityModelDao<Entity>, Entity>(handle, entitySqlDaoTransactionWrapper));
-            logger.debug("[{}] Exiting  transaction {}, returning {}", debugPrefix, debugInfo, returnType);
+            logger.debug("Exiting  transaction {}, returning {}", debugInfo, returnType);
             return returnType;
         } finally {
             handle.close();
-            logger.debug("[{}] DBI handle closed,  transaction: {}", debugPrefix, debugInfo);
+            logger.debug("DBI handle closed,  transaction: {}", debugInfo);
         }
     }
 
@@ -112,7 +109,7 @@ public class EntitySqlDaoTransactionalJdbiWrapper {
     // to send bus events, record notifications where we need to keep the Connection through the jDBI Handle.
     //
     public <M extends EntityModelDao<E>, E extends Entity, T extends EntitySqlDao<M, E>> T onDemandForStreamingResults(final Class<T> sqlObjectType) {
-        return roDbi.onDemand(sqlObjectType);
+        return dbRouter.onDemand(true, sqlObjectType);
     }
 
     /**

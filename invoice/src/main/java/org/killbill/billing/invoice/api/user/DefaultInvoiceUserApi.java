@@ -204,6 +204,10 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
 
     @Override
     public Invoice getInvoice(final UUID invoiceId, final TenantContext context) throws InvoiceApiException {
+        return getInvoiceInternal(invoiceId, context);
+    }
+
+    private DefaultInvoice getInvoiceInternal(final UUID invoiceId, final TenantContext context) throws InvoiceApiException {
         final InternalTenantContext internalTenantContext = internalCallContextFactory.createInternalTenantContext(invoiceId, ObjectType.INVOICE, context);
         return new DefaultInvoice(dao.getById(invoiceId, internalTenantContext), getCatalogSafelyForPrettyNames(internalTenantContext));
     }
@@ -277,7 +281,7 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
     @Override
     public List<InvoiceItem> insertExternalCharges(final UUID accountId, final LocalDate effectiveDate, final Iterable<InvoiceItem> charges, final boolean autoCommit, final CallContext context) throws InvoiceApiException {
         for (final InvoiceItem charge : charges) {
-            if (charge.getAmount() == null || charge.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            if (charge.getAmount() == null || charge.getAmount().compareTo(BigDecimal.ZERO) < 0) {
                 throw new InvoiceApiException(ErrorCode.EXTERNAL_CHARGE_AMOUNT_INVALID, charge.getAmount());
             }
         }
@@ -285,13 +289,13 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
         final WithAccountLock withAccountLock = new WithAccountLock() {
 
             @Override
-            public Iterable<Invoice> prepareInvoices() throws InvoiceApiException {
+            public Iterable<DefaultInvoice> prepareInvoices() throws InvoiceApiException {
                 final InternalTenantContext internalTenantContext = internalCallContextFactory.createInternalTenantContext(accountId, context);
                 final LocalDate invoiceDate = internalTenantContext.toLocalDate(context.getCreatedDate());
 
                 // Group all new external charges on the same invoice (per currency)
-                final Map<Currency, Invoice> newInvoicesForExternalCharges = new HashMap<Currency, Invoice>();
-                final Map<UUID, Invoice> existingInvoicesForExternalCharges = new HashMap<UUID, Invoice>();
+                final Map<Currency, DefaultInvoice> newInvoicesForExternalCharges = new HashMap<Currency, DefaultInvoice>();
+                final Map<UUID, DefaultInvoice> existingInvoicesForExternalCharges = new HashMap<UUID, DefaultInvoice>();
 
                 for (final InvoiceItem charge : charges) {
                     final Invoice invoiceForExternalCharge;
@@ -301,13 +305,13 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
                         final Currency currency = charge.getCurrency();
                         if (newInvoicesForExternalCharges.get(currency) == null) {
                             final InvoiceStatus status = autoCommit ? InvoiceStatus.COMMITTED : InvoiceStatus.DRAFT;
-                            final Invoice newInvoiceForExternalCharge = new DefaultInvoice(accountId, invoiceDate, effectiveDate, currency, status);
+                            final DefaultInvoice newInvoiceForExternalCharge = new DefaultInvoice(accountId, invoiceDate, effectiveDate, currency, status);
                             newInvoicesForExternalCharges.put(currency, newInvoiceForExternalCharge);
                         }
                         invoiceForExternalCharge = newInvoicesForExternalCharges.get(currency);
                     } else {
                         if (existingInvoicesForExternalCharges.get(invoiceIdForExternalCharge) == null) {
-                            final Invoice existingInvoiceForExternalCharge = getInvoice(invoiceIdForExternalCharge, context);
+                            final DefaultInvoice existingInvoiceForExternalCharge = getInvoiceInternal(invoiceIdForExternalCharge, context);
                             if (InvoiceStatus.COMMITTED.equals(existingInvoiceForExternalCharge.getStatus())) {
                                 throw new InvoiceApiException(ErrorCode.INVOICE_ALREADY_COMMITTED, existingInvoiceForExternalCharge.getId());
                             }
@@ -325,8 +329,10 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
                                                                                      accountId,
                                                                                      charge.getBundleId(),
                                                                                      charge.getSubscriptionId(),
+                                                                                     charge.getProductName(),
                                                                                      charge.getPlanName(),
                                                                                      charge.getPhaseName(),
+                                                                                     charge.getPrettyProductName(),
                                                                                      charge.getPrettyPlanName(),
                                                                                      charge.getPrettyPhaseName(),
                                                                                      charge.getDescription(),
@@ -341,7 +347,7 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
                     invoiceForExternalCharge.addInvoiceItem(externalCharge);
                 }
 
-                return Iterables.<Invoice>concat(newInvoicesForExternalCharges.values(), existingInvoicesForExternalCharges.values());
+                return Iterables.<DefaultInvoice>concat(newInvoicesForExternalCharges.values(), existingInvoicesForExternalCharges.values());
             }
         };
 
@@ -382,12 +388,12 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
             private InvoiceItem creditItem;
 
             @Override
-            public List<Invoice> prepareInvoices() throws InvoiceApiException {
+            public List<DefaultInvoice> prepareInvoices() throws InvoiceApiException {
                 final InternalTenantContext internalTenantContext = internalCallContextFactory.createInternalTenantContext(accountId, context);
                 final LocalDate invoiceDate = internalTenantContext.toLocalDate(context.getCreatedDate());
 
                 // Create an invoice for that credit if it doesn't exist
-                final Invoice invoiceForCredit;
+                final DefaultInvoice invoiceForCredit;
                 if (invoiceId == null) {
                     final InvoiceStatus status = autoCommit ? InvoiceStatus.COMMITTED : InvoiceStatus.DRAFT;
                     invoiceForCredit = new DefaultInvoice(accountId, invoiceDate, effectiveDate, currency, status);
@@ -411,7 +417,7 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
                                                       itemDetails);
                 invoiceForCredit.addInvoiceItem(creditItem);
 
-                return ImmutableList.<Invoice>of(invoiceForCredit);
+                return ImmutableList.<DefaultInvoice>of(invoiceForCredit);
             }
         };
 
@@ -443,8 +449,8 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
 
         final WithAccountLock withAccountLock = new WithAccountLock() {
             @Override
-            public Iterable<Invoice> prepareInvoices() throws InvoiceApiException {
-                final Invoice invoice = getInvoiceAndCheckCurrency(invoiceId, currency, context);
+            public Iterable<DefaultInvoice> prepareInvoices() throws InvoiceApiException {
+                final DefaultInvoice invoice = getInvoiceAndCheckCurrency(invoiceId, currency, context);
                 final InvoiceItem adjustmentItem = invoiceApiHelper.createAdjustmentItem(invoice,
                                                                                          invoiceItemId,
                                                                                          amount,
@@ -457,7 +463,7 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
                     invoice.addInvoiceItem(adjustmentItem);
                 }
 
-                return ImmutableList.<Invoice>of(invoice);
+                return ImmutableList.<DefaultInvoice>of(invoice);
             }
         };
 
@@ -523,6 +529,7 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
                                                input.getBundleId(),
                                                input.getSubscriptionId(),
                                                input.getDescription(),
+                                               input.getProductName(),
                                                input.getPlanName(),
                                                input.getPhaseName(),
                                                input.getUsageName(),
@@ -560,8 +567,8 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
                                                                     }));
     }
 
-    private Invoice getInvoiceAndCheckCurrency(final UUID invoiceId, @Nullable final Currency currency, final TenantContext context) throws InvoiceApiException {
-        final Invoice invoice = getInvoice(invoiceId, context);
+    private DefaultInvoice getInvoiceAndCheckCurrency(final UUID invoiceId, @Nullable final Currency currency, final TenantContext context) throws InvoiceApiException {
+        final DefaultInvoice invoice = getInvoiceInternal(invoiceId, context);
         // Check the specified currency matches the one of the existing invoice
         if (currency != null && invoice.getCurrency() != currency) {
             throw new InvoiceApiException(ErrorCode.CURRENCY_INVALID, currency, invoice.getCurrency());
@@ -639,7 +646,7 @@ public class DefaultInvoiceUserApi implements InvoiceUserApi {
     private void canInvoiceBeVoided(final Invoice invoice) throws InvoiceApiException {
         final List<InvoicePayment> invoicePayments = invoice.getPayments();
         final BigDecimal amountPaid = InvoiceCalculatorUtils.computeInvoiceAmountPaid(invoice.getCurrency(), invoicePayments)
-                .add(InvoiceCalculatorUtils.computeInvoiceAmountRefunded(invoice.getCurrency(), invoicePayments));
+                                                            .add(InvoiceCalculatorUtils.computeInvoiceAmountRefunded(invoice.getCurrency(), invoicePayments));
 
         if (amountPaid.compareTo(BigDecimal.ZERO) != 0) {
             throw new InvoiceApiException(ErrorCode.CAN_NOT_VOID_INVOICE_THAT_IS_PAID, invoice.getId().toString());

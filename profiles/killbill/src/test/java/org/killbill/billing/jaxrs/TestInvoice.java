@@ -25,7 +25,6 @@ import java.util.UUID;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 import org.joda.time.LocalDate;
-import org.killbill.billing.api.FlakyRetryAnalyzer;
 import org.killbill.billing.catalog.api.BillingPeriod;
 import org.killbill.billing.catalog.api.ProductCategory;
 import org.killbill.billing.client.JaxrsResource;
@@ -46,6 +45,7 @@ import org.killbill.billing.entitlement.api.SubscriptionEventType;
 import org.killbill.billing.invoice.api.DryRunType;
 import org.killbill.billing.invoice.api.InvoiceItemType;
 import org.killbill.billing.invoice.api.InvoiceStatus;
+import org.killbill.billing.notification.plugin.api.ExtBusEventType;
 import org.killbill.billing.payment.provider.ExternalPaymentProviderPlugin;
 import org.killbill.billing.util.api.AuditLevel;
 import org.testng.Assert;
@@ -84,6 +84,14 @@ public class TestInvoice extends TestJaxrsBase {
         }
 
         final Invoice invoiceJson = invoices.get(0);
+        assertEquals(invoiceJson.getItems().size(), 1);
+        final InvoiceItem invoiceItem = invoiceJson.getItems().get(0);
+        assertEquals(invoiceItem.getProductName(), "Shotgun");
+        assertEquals(invoiceItem.getPrettyProductName(), "Shotgun");
+        assertEquals(invoiceItem.getPlanName(), "shotgun-monthly");
+        assertEquals(invoiceItem.getPrettyPlanName(), "Shotgun Monthly");
+        assertEquals(invoiceItem.getPhaseName(), "shotgun-monthly-trial");
+        assertEquals(invoiceItem.getPrettyPhaseName(), "shotgun-monthly-trial");
 
         // Check get with & without items
         assertTrue(invoiceApi.getInvoice(invoiceJson.getInvoiceId(), Boolean.FALSE, Boolean.FALSE, AuditLevel.NONE, requestOptions).getItems().isEmpty());
@@ -525,8 +533,7 @@ public class TestInvoice extends TestJaxrsBase {
         assertEquals(accountApi.getInvoicesForAccount(accountJson.getAccountId(), requestOptions).size(), 3);
     }
 
-    // Flaky, see https://github.com/killbill/killbill/issues/801
-    @Test(groups = "slow", description = "Can create multiple external charges with same invoice and external keys", retryAnalyzer = FlakyRetryAnalyzer.class)
+    @Test(groups = "slow", description = "Can create multiple external charges with same invoice and external keys")
     public void testExternalChargesWithSameInvoiceAndExternalKeys() throws Exception {
         final Account accountJson = createAccountWithPMBundleAndSubscriptionAndWaitForFirstInvoice();
 
@@ -631,8 +638,9 @@ public class TestInvoice extends TestJaxrsBase {
         createAccountWithPMBundleAndSubscriptionAndWaitForFirstInvoice();
 
         for (int i = 0; i < 3; i++) {
+            callbackServlet.pushExpectedEvents(ExtBusEventType.INVOICE_CREATION, ExtBusEventType.INVOICE_PAYMENT_SUCCESS, ExtBusEventType.PAYMENT_SUCCESS);
             clock.addMonths(1);
-            crappyWaitForLackOfProperSynchonization();
+            callbackServlet.assertListenerStatus();
         }
 
         final Invoices allInvoices = invoiceApi.getInvoices(requestOptions);
@@ -778,14 +786,21 @@ public class TestInvoice extends TestJaxrsBase {
 
         // Add a bundle, subscription and move the clock to get the first invoice
         createSubscription(childAccount1.getAccountId(), UUID.randomUUID().toString(), "Shotgun",
-                          ProductCategory.BASE, BillingPeriod.MONTHLY, true);
+                           ProductCategory.BASE, BillingPeriod.MONTHLY, true);
         createSubscription(childAccount2.getAccountId(), UUID.randomUUID().toString(), "Pistol",
-                          ProductCategory.BASE, BillingPeriod.MONTHLY, true);
+                           ProductCategory.BASE, BillingPeriod.MONTHLY, true);
         createSubscription(childAccount3.getAccountId(), UUID.randomUUID().toString(), "Shotgun",
-                          ProductCategory.BASE, BillingPeriod.MONTHLY, true);
+                           ProductCategory.BASE, BillingPeriod.MONTHLY, true);
 
+        callbackServlet.pushExpectedEvents(ExtBusEventType.SUBSCRIPTION_PHASE,
+                                           ExtBusEventType.SUBSCRIPTION_PHASE,
+                                           ExtBusEventType.SUBSCRIPTION_PHASE,
+                                           ExtBusEventType.INVOICE_CREATION,
+                                           ExtBusEventType.INVOICE_CREATION,
+                                           ExtBusEventType.INVOICE_CREATION,
+                                           ExtBusEventType.INVOICE_CREATION);
         clock.addDays(32);
-        crappyWaitForLackOfProperSynchonization();
+        callbackServlet.assertListenerStatus();
 
         final List<Invoice> child1Invoices = accountApi.getInvoicesForAccount(childAccount1.getAccountId(), true, false, false, false, AuditLevel.NONE, requestOptions);
         final List<Invoice> child2Invoices = accountApi.getInvoicesForAccount(childAccount2.getAccountId(), true, false, false, false, AuditLevel.NONE, requestOptions);

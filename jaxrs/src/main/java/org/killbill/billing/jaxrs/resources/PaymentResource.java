@@ -47,6 +47,7 @@ import org.killbill.billing.account.api.Account;
 import org.killbill.billing.account.api.AccountApiException;
 import org.killbill.billing.account.api.AccountUserApi;
 import org.killbill.billing.catalog.api.Currency;
+import org.killbill.billing.jaxrs.json.AuditLogJson;
 import org.killbill.billing.jaxrs.json.ComboPaymentTransactionJson;
 import org.killbill.billing.jaxrs.json.CustomFieldJson;
 import org.killbill.billing.jaxrs.json.PaymentJson;
@@ -60,6 +61,7 @@ import org.killbill.billing.payment.api.PaymentApiException;
 import org.killbill.billing.payment.api.PaymentOptions;
 import org.killbill.billing.payment.api.PluginProperty;
 import org.killbill.billing.payment.api.TransactionType;
+import org.killbill.billing.util.api.AuditLevel;
 import org.killbill.billing.util.api.AuditUserApi;
 import org.killbill.billing.util.api.CustomFieldApiException;
 import org.killbill.billing.util.api.CustomFieldUserApi;
@@ -67,6 +69,7 @@ import org.killbill.billing.util.api.TagApiException;
 import org.killbill.billing.util.api.TagDefinitionApiException;
 import org.killbill.billing.util.api.TagUserApi;
 import org.killbill.billing.util.audit.AccountAuditLogs;
+import org.killbill.billing.util.audit.AuditLogWithHistory;
 import org.killbill.billing.util.callcontext.CallContext;
 import org.killbill.billing.util.callcontext.TenantContext;
 import org.killbill.billing.util.customfield.CustomField;
@@ -244,7 +247,7 @@ public class PaymentResource extends ComboPaymentResource {
     @Consumes(APPLICATION_JSON)
     @Produces(APPLICATION_JSON)
     @ApiOperation(value = "Complete an existing transaction")
-    @ApiResponses(value = {@ApiResponse(code = 201, message = "Payment transaction created successfully"),
+    @ApiResponses(value = {@ApiResponse(code = 204, message = "Successful operation"),
                            @ApiResponse(code = 400, message = "Invalid paymentId supplied"),
                            @ApiResponse(code = 404, message = "Account or payment not found"),
                            @ApiResponse(code = 402, message = "Transaction declined by gateway"),
@@ -261,7 +264,8 @@ public class PaymentResource extends ComboPaymentResource {
                                         @HeaderParam(HDR_COMMENT) final String comment,
                                         @javax.ws.rs.core.Context final UriInfo uriInfo,
                                         @javax.ws.rs.core.Context final HttpServletRequest request) throws PaymentApiException, AccountApiException {
-        return completeTransactionInternalWithoutPayment(json, paymentId, paymentControlPluginNames, pluginPropertiesString, createdBy, reason, comment, uriInfo, request);
+        completeTransactionInternalWithoutPayment(json, paymentId, paymentControlPluginNames, pluginPropertiesString, createdBy, reason, comment, uriInfo, request);
+        return Response.status(Status.NO_CONTENT).build();
     }
 
 
@@ -271,7 +275,7 @@ public class PaymentResource extends ComboPaymentResource {
     @Consumes(APPLICATION_JSON)
     @Produces(APPLICATION_JSON)
     @ApiOperation(value = "Complete an existing transaction")
-    @ApiResponses(value = {@ApiResponse(code = 201, message = "Payment transaction created successfully"),
+    @ApiResponses(value = {@ApiResponse(code = 204, message = "Successful operation"),
                            @ApiResponse(code = 404, message = "Account or payment not found"),
                            @ApiResponse(code = 402, message = "Transaction declined by gateway"),
                            @ApiResponse(code = 422, message = "Payment is aborted by a control plugin"),
@@ -286,7 +290,8 @@ public class PaymentResource extends ComboPaymentResource {
                                                      @HeaderParam(HDR_COMMENT) final String comment,
                                                      @javax.ws.rs.core.Context final UriInfo uriInfo,
                                                      @javax.ws.rs.core.Context final HttpServletRequest request) throws PaymentApiException, AccountApiException {
-        return completeTransactionInternalWithoutPayment(json, null, paymentControlPluginNames, pluginPropertiesString, createdBy, reason, comment, uriInfo, request);
+        completeTransactionInternalWithoutPayment(json, null, paymentControlPluginNames, pluginPropertiesString, createdBy, reason, comment, uriInfo, request);
+        return Response.status(Status.NO_CONTENT).build();
     }
 
 
@@ -461,7 +466,7 @@ public class PaymentResource extends ComboPaymentResource {
     @Consumes(APPLICATION_JSON)
     @Produces(APPLICATION_JSON)
     @ApiOperation(value = "Void an existing payment")
-    @ApiResponses(value = {@ApiResponse(code = 201, message = "Payment transaction created successfully"),
+    @ApiResponses(value = {@ApiResponse(code = 204, message = "Successful operation"),
                            @ApiResponse(code = 400, message = "Invalid paymentId supplied"),
                            @ApiResponse(code = 404, message = "Account or payment not found"),
                            @ApiResponse(code = 402, message = "Transaction declined by gateway"),
@@ -486,7 +491,7 @@ public class PaymentResource extends ComboPaymentResource {
     @Consumes(APPLICATION_JSON)
     @Produces(APPLICATION_JSON)
     @ApiOperation(value = "Void an existing payment")
-    @ApiResponses(value = {@ApiResponse(code = 201, message = "Payment transaction created successfully"),
+    @ApiResponses(value = {@ApiResponse(code = 204, message = "Successful operation"),
                            @ApiResponse(code = 404, message = "Account or payment not found"),
                            @ApiResponse(code = 402, message = "Transaction declined by gateway"),
                            @ApiResponse(code = 422, message = "Payment is aborted by a control plugin"),
@@ -525,9 +530,10 @@ public class PaymentResource extends ComboPaymentResource {
         final String transactionExternalKey = json != null ? json.getTransactionExternalKey() : null;
         final PaymentOptions paymentOptions = createControlPluginApiPaymentOptions(paymentControlPluginNames);
 
-        final Payment payment = paymentApi.createVoidWithPaymentControl(account, initialPayment.getId(), json.getEffectiveDate(), transactionExternalKey,
-                                                                        pluginProperties, paymentOptions, callContext);
-        return createPaymentResponse(uriInfo, payment, TransactionType.VOID, json.getTransactionExternalKey(), request);
+        paymentApi.createVoidWithPaymentControl(account, initialPayment.getId(), json.getEffectiveDate(), transactionExternalKey,
+                                                pluginProperties, paymentOptions, callContext);
+
+        return Response.status(Status.NO_CONTENT).build();
     }
 
     @TimedResource(name = "chargebackPayment")
@@ -903,12 +909,38 @@ public class PaymentResource extends ComboPaymentResource {
                                 context.createCallContextNoAccountId(createdBy, reason, comment, request));
     }
 
+    @TimedResource
+    @GET
+    @Path("/{paymentId:" + UUID_PATTERN + "}/" + AUDIT_LOG_WITH_HISTORY)
+    @Produces(APPLICATION_JSON)
+    @ApiOperation(value = "Retrieve payment audit logs with history by id", response = AuditLogJson.class, responseContainer = "List")
+    @ApiResponses(value = {@ApiResponse(code = 404, message = "Account not found")})
+    public Response getPaymentAuditLogsWithHistory(@PathParam("paymentId") final UUID paymentId,
+                                                   @javax.ws.rs.core.Context final HttpServletRequest request) throws AccountApiException {
+        final TenantContext tenantContext = context.createTenantContextNoAccountId(request);
+        final List<AuditLogWithHistory> auditLogWithHistory = paymentApi.getPaymentAuditLogsWithHistoryForId(paymentId, AuditLevel.FULL, tenantContext);
+        return Response.status(Status.OK).entity(getAuditLogsWithHistory(auditLogWithHistory)).build();
+    }
+
+    @TimedResource
+    @GET
+    @Path("/" + ATTEMPTS + "/{paymentAttemptId:" + UUID_PATTERN + "}/" + AUDIT_LOG_WITH_HISTORY)
+    @Produces(APPLICATION_JSON)
+    @ApiOperation(value = "Retrieve payment attempt audit logs with history by id", response = AuditLogJson.class, responseContainer = "List")
+    @ApiResponses(value = {@ApiResponse(code = 404, message = "Account not found")})
+    public Response getPaymentAttemptAuditLogsWithHistory(@PathParam("paymentAttemptId") final UUID paymentAttemptId,
+                                                   @javax.ws.rs.core.Context final HttpServletRequest request) throws AccountApiException {
+        final TenantContext tenantContext = context.createTenantContextNoAccountId(request);
+        final List<AuditLogWithHistory> auditLogWithHistory = paymentApi.getPaymentAttemptAuditLogsWithHistoryForId(paymentAttemptId, AuditLevel.FULL, tenantContext);
+        return Response.status(Status.OK).entity(getAuditLogsWithHistory(auditLogWithHistory)).build();
+    }
+
     @Override
     protected ObjectType getObjectType() {
         return ObjectType.PAYMENT;
     }
 
-    private Response completeTransactionInternalWithoutPayment(final PaymentTransactionJson json,
+    private void completeTransactionInternalWithoutPayment(final PaymentTransactionJson json,
                                                                @Nullable final UUID paymentId,
                                                                final List<String> paymentControlPluginNames,
                                                                final Iterable<String> pluginPropertiesString,
@@ -927,7 +959,7 @@ public class PaymentResource extends ComboPaymentResource {
         final CallContext callContextNoAccountId = context.createCallContextNoAccountId(createdBy, reason, comment, request);
         final Payment initialPayment = getPaymentByIdOrKey(paymentId, json == null ? null : json.getPaymentExternalKey(), pluginProperties, callContextNoAccountId);
 
-        return completeTransactionInternal(json, initialPayment, paymentControlPluginNames, pluginProperties, callContextNoAccountId, createdBy, reason, comment, uriInfo, request);
+        completeTransactionInternal(json, initialPayment, paymentControlPluginNames, pluginProperties, callContextNoAccountId, createdBy, reason, comment, uriInfo, request);
     }
 
 }

@@ -39,8 +39,8 @@ import org.killbill.billing.invoice.dao.InvoiceDao;
 import org.killbill.billing.invoice.dao.InvoiceItemModelDao;
 import org.killbill.billing.invoice.dao.InvoiceModelDao;
 import org.killbill.billing.invoice.model.DefaultInvoice;
+import org.killbill.billing.invoice.model.InvoiceItemCatalogBase;
 import org.killbill.billing.invoice.model.InvoiceItemFactory;
-import org.killbill.billing.invoice.model.ItemAdjInvoiceItem;
 import org.killbill.billing.util.UUIDs;
 import org.killbill.billing.util.callcontext.CallContext;
 import org.killbill.billing.util.callcontext.InternalCallContextFactory;
@@ -92,7 +92,7 @@ public class InvoiceApiHelper {
 
         boolean success = false;
         GlobalLock lock = null;
-        Iterable<Invoice> invoicesForPlugins = null;
+        Iterable<DefaultInvoice> invoicesForPlugins = null;
         try {
             lock = locker.lockWithNumberOfTries(LockerType.ACCNT_INV_PAY.toString(), accountId.toString(), invoiceConfig.getMaxGlobalLockRetries());
 
@@ -100,10 +100,9 @@ public class InvoiceApiHelper {
 
             final InternalCallContext internalCallContext = internalCallContextFactory.createInternalCallContext(accountId, context);
             final List<InvoiceModelDao> invoiceModelDaos = new LinkedList<InvoiceModelDao>();
-            for (final Invoice invoiceForPlugin : invoicesForPlugins) {
-                // Call plugin
-                final List<InvoiceItem> additionalInvoiceItems = invoicePluginDispatcher.getAdditionalInvoiceItems(invoiceForPlugin, isDryRun, context, internalCallContext);
-                invoiceForPlugin.addInvoiceItems(additionalInvoiceItems);
+            for (final DefaultInvoice invoiceForPlugin : invoicesForPlugins) {
+                // Call plugin(s)
+                invoicePluginDispatcher.updateOriginalInvoiceWithPluginInvoiceItems(invoiceForPlugin, isDryRun, context, internalCallContext);
 
                 // Transformation to InvoiceModelDao
                 final InvoiceModelDao invoiceModelDao = new InvoiceModelDao(invoiceForPlugin);
@@ -187,16 +186,27 @@ public class InvoiceApiHelper {
         // If we pass that stage, it means the validation succeeded so we just need to extract resulting amount and negate the result.
         final BigDecimal amountToAdjust = output.get(invoiceItemId).negate();
         // Finally, create the adjustment
-        return new ItemAdjInvoiceItem(UUIDs.randomUUID(),
-                                      context.getCreatedDate(),
-                                      invoiceItemToBeAdjusted.getInvoiceId(),
-                                      invoiceItemToBeAdjusted.getAccountId(),
-                                      effectiveDate,
-                                      description,
-                                      amountToAdjust,
-                                      currencyForAdjustment,
-                                      invoiceItemToBeAdjusted.getId(),
-                                      itemDetails);
+
+        return new InvoiceItemCatalogBase(UUIDs.randomUUID(),
+                                          context.getCreatedDate(),
+                                          invoiceItemToBeAdjusted.getInvoiceId(),
+                                          invoiceItemToBeAdjusted.getAccountId(),
+                                          null,
+                                          null,
+                                          description,
+                                          invoiceItemToBeAdjusted.getProductName(),
+                                          invoiceItemToBeAdjusted.getPlanName(),
+                                          invoiceItemToBeAdjusted.getPhaseName(),
+                                          invoiceItemToBeAdjusted.getUsageName(),
+                                          effectiveDate,
+                                          effectiveDate,
+                                          amountToAdjust,
+                                          null,
+                                          currencyForAdjustment,
+                                          invoiceItemToBeAdjusted.getId(),
+                                          null,
+                                          itemDetails,
+                                          InvoiceItemType.ITEM_ADJ);
     }
 
     private List<InvoiceItem> fromInvoiceItemModelDao(final Collection<InvoiceItemModelDao> invoiceItemModelDaos) {
