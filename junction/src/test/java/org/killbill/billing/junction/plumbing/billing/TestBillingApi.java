@@ -1,7 +1,7 @@
 /*
  * Copyright 2010-2013 Ning, Inc.
- * Copyright 2014-2016 Groupon, Inc
- * Copyright 2014-2016 The Billing Project, LLC
+ * Copyright 2014-2018 Groupon, Inc
+ * Copyright 2014-2018 The Billing Project, LLC
  *
  * The Billing Project licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -21,7 +21,6 @@ package org.killbill.billing.junction.plumbing.billing;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.SortedSet;
 import java.util.UUID;
 
@@ -33,6 +32,7 @@ import org.killbill.billing.account.api.AccountApiException;
 import org.killbill.billing.callcontext.InternalTenantContext;
 import org.killbill.billing.catalog.MockCatalog;
 import org.killbill.billing.catalog.api.BillingAlignment;
+import org.killbill.billing.catalog.api.Catalog;
 import org.killbill.billing.catalog.api.CatalogApiException;
 import org.killbill.billing.catalog.api.Currency;
 import org.killbill.billing.catalog.api.InternationalPrice;
@@ -100,9 +100,9 @@ public class TestBillingApi extends JunctionTestSuiteNoDB {
 
         Mockito.when(subscriptionInternalApi.getBundlesForAccount(Mockito.<UUID>any(), Mockito.<InternalTenantContext>any())).thenReturn(bundles);
         Mockito.when(subscriptionInternalApi.getSubscriptionsForBundle(Mockito.<UUID>any(), Mockito.<DryRunArguments>any(), Mockito.<InternalTenantContext>any())).thenReturn(subscriptions);
-        Mockito.when(subscriptionInternalApi.getSubscriptionsForAccount(Mockito.<InternalTenantContext>any())).thenReturn(ImmutableMap.<UUID, List<SubscriptionBase>>builder()
-                                                                                                                                  .put(bunId, subscriptions)
-                                                                                                                                  .build());
+        Mockito.when(subscriptionInternalApi.getSubscriptionsForAccount(Mockito.<Catalog>any(), Mockito.<InternalTenantContext>any())).thenReturn(ImmutableMap.<UUID, List<SubscriptionBase>>builder()
+                                                                                                                                                          .put(bunId, subscriptions)
+                                                                                                                                                          .build());
         Mockito.when(subscriptionInternalApi.getSubscriptionFromId(Mockito.<UUID>any(), Mockito.<InternalTenantContext>any())).thenReturn(subscription);
         Mockito.when(subscriptionInternalApi.getBundleFromId(Mockito.<UUID>any(), Mockito.<InternalTenantContext>any())).thenReturn(bundle);
         Mockito.when(subscriptionInternalApi.getBaseSubscription(Mockito.<UUID>any(), Mockito.<InternalTenantContext>any())).thenReturn(subscription);
@@ -286,7 +286,7 @@ public class TestBillingApi extends JunctionTestSuiteNoDB {
     private DateTime createSubscriptionCreationEvent(final Plan nextPlan, final PlanPhase nextPhase) throws CatalogApiException {
         final DateTime now = clock.getUTCNow();
         final DateTime then = now.minusDays(1);
-        final PriceList nextPriceList = catalog.findPriceList(PriceListSet.DEFAULT_PRICELIST_NAME, now);
+        final PriceList nextPriceList = catalog.findPriceListForPlan(nextPlan.getName(), now, now);
 
         final EffectiveSubscriptionInternalEvent t = new MockEffectiveSubscriptionEvent(
                 eventId, subId, bunId, bunKey, then, now, null, null, null, null, null, EntitlementState.ACTIVE,

@@ -47,6 +47,7 @@ import org.killbill.billing.payment.api.TransactionType;
 import org.killbill.billing.payment.bus.PaymentBusEventHandler;
 import org.killbill.billing.payment.core.janitor.Janitor;
 import org.killbill.billing.payment.dao.PaymentAttemptModelDao;
+import org.killbill.billing.payment.dao.PaymentModelDao;
 import org.killbill.billing.payment.dao.PaymentTransactionModelDao;
 import org.killbill.billing.payment.glue.DefaultPaymentService;
 import org.killbill.billing.payment.invoice.InvoicePaymentControlPluginApi;
@@ -55,8 +56,13 @@ import org.killbill.billing.payment.plugin.api.PaymentTransactionInfoPlugin;
 import org.killbill.billing.payment.provider.DefaultNoOpPaymentInfoPlugin;
 import org.killbill.billing.payment.provider.MockPaymentProviderPlugin;
 import org.killbill.billing.platform.api.KillbillConfigSource;
+import org.killbill.billing.util.api.AuditLevel;
+import org.killbill.billing.util.audit.AuditLogWithHistory;
 import org.killbill.billing.util.callcontext.InternalCallContextFactory;
+import org.killbill.billing.util.entity.dao.DBRouterUntyped;
+import org.killbill.billing.util.entity.dao.DBRouterUntyped.THREAD_STATE;
 import org.killbill.bus.api.PersistentBus.EventBusException;
+import org.killbill.commons.profiling.Profiling.WithProfilingCallback;
 import org.killbill.notificationq.api.NotificationEvent;
 import org.killbill.notificationq.api.NotificationEventWithMetadata;
 import org.killbill.notificationq.api.NotificationQueueService;
@@ -75,8 +81,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.inject.Inject;
 
-import static org.awaitility.Awaitility.await;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.awaitility.Awaitility.await;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.fail;
 
@@ -124,12 +130,19 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
 
     @BeforeClass(groups = "slow")
     protected void beforeClass() throws Exception {
+        if (hasFailed()) {
+            return;
+        }
         super.beforeClass();
         mockPaymentProviderPlugin = (MockPaymentProviderPlugin) registry.getServiceForName(MockPaymentProviderPlugin.PLUGIN_NAME);
     }
 
     @BeforeMethod(groups = "slow")
     public void beforeMethod() throws Exception {
+        if (hasFailed()) {
+            return;
+        }
+
         super.beforeMethod();
 
         retryService.initialize();
@@ -328,7 +341,7 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
                                                            "foo", "bar", internalCallContext);
         testListener.assertListenerStatus();
 
-        final List<PaymentTransactionModelDao> paymentTransactionHistoryBeforeJanitor = getPaymentTransactionHistory(transactionExternalKey);
+        final List<AuditLogWithHistory> paymentTransactionHistoryBeforeJanitor = paymentDao.getPaymentTransactionAuditLogsWithHistoryForId(payment.getTransactions().get(0).getId(), AuditLevel.FULL, internalCallContext);
         Assert.assertEquals(paymentTransactionHistoryBeforeJanitor.size(), 3);
 
         // Move clock for notification to be processed
@@ -338,9 +351,11 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
         testListener.assertListenerStatus();
 
         // Proves the Janitor ran (and updated the transaction)
-        final List<PaymentTransactionModelDao> paymentTransactionHistoryAfterJanitor = getPaymentTransactionHistory(transactionExternalKey);
+        final List<AuditLogWithHistory> paymentTransactionHistoryAfterJanitor = paymentDao.getPaymentTransactionAuditLogsWithHistoryForId(payment.getTransactions().get(0).getId(), AuditLevel.FULL, internalCallContext);
         Assert.assertEquals(paymentTransactionHistoryAfterJanitor.size(), 4);
-        Assert.assertEquals(paymentTransactionHistoryAfterJanitor.get(3).getTransactionStatus(), TransactionStatus.PAYMENT_FAILURE);
+
+        PaymentTransactionModelDao history3 = (PaymentTransactionModelDao) paymentTransactionHistoryAfterJanitor.get(3).getEntity();
+        Assert.assertEquals(history3.getTransactionStatus(), TransactionStatus.PAYMENT_FAILURE);
 
         final Payment updatedPayment = paymentApi.getPayment(payment.getId(), false, false, ImmutableList.<PluginProperty>of(), callContext);
         // Janitor should have moved us to PAYMENT_FAILURE
@@ -378,11 +393,11 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
         // NO because we will keep retrying as we can't fix it...
         //assertNotificationsCompleted(internalCallContext, 5);
 
-        final List<PaymentTransactionModelDao> paymentTransactionHistoryBeforeJanitor = getPaymentTransactionHistory(transactionExternalKey);
+        final List<AuditLogWithHistory> paymentTransactionHistoryBeforeJanitor = paymentDao.getPaymentTransactionAuditLogsWithHistoryForId(payment.getTransactions().get(0).getId(), AuditLevel.FULL, internalCallContext);
         Assert.assertEquals(paymentTransactionHistoryBeforeJanitor.size(), 3);
 
         // Nothing new happened
-        final List<PaymentTransactionModelDao> paymentTransactionHistoryAfterJanitor = getPaymentTransactionHistory(transactionExternalKey);
+        final List<AuditLogWithHistory> paymentTransactionHistoryAfterJanitor = paymentDao.getPaymentTransactionAuditLogsWithHistoryForId(payment.getTransactions().get(0).getId(), AuditLevel.FULL, internalCallContext);
         Assert.assertEquals(paymentTransactionHistoryAfterJanitor.size(), 3);
     }
 
@@ -472,40 +487,50 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
         });
     }
 
+    @Test(groups = "slow")
+    public void testDBRouterThreadState() throws Throwable {
+        final Payment payment = (Payment) DBRouterUntyped.withRODBIAllowed(true,
+                                                                           new WithProfilingCallback<Object, Throwable>() {
+                                                                               @Override
+                                                                               public Payment execute() throws Throwable {
+                                                                                   // Shouldn't happen in practice, but it's just to verify the behavior
+                                                                                   assertEquals(DBRouterUntyped.getCurrentState(), THREAD_STATE.RO_ALLOWED);
+
+                                                                                   final BigDecimal requestedAmount = BigDecimal.TEN;
+                                                                                   testListener.pushExpectedEvent(NextEvent.PAYMENT);
+                                                                                   final Payment payment = paymentApi.createAuthorization(account, account.getPaymentMethodId(), null, requestedAmount, account.getCurrency(), null, UUID.randomUUID().toString(),
+                                                                                                                                          UUID.randomUUID().toString(), ImmutableList.<PluginProperty>of(), callContext);
+                                                                                   testListener.assertListenerStatus();
+
+                                                                                   // Thread switch, RW by default
+                                                                                   assertEquals(mockPaymentProviderPlugin.getLastThreadState(), THREAD_STATE.RW_ONLY);
+                                                                                   // Switched to RW, because of RW DAO call
+                                                                                   assertEquals(DBRouterUntyped.getCurrentState(), THREAD_STATE.RW_ONLY);
+                                                                                   return payment;
+                                                                               }
+                                                                           });
+
+        DBRouterUntyped.withRODBIAllowed(true,
+                                         new WithProfilingCallback<Object, Throwable>() {
+                                             @Override
+                                             public Object execute() throws Throwable {
+                                                 assertEquals(DBRouterUntyped.getCurrentState(), THREAD_STATE.RO_ALLOWED);
+
+                                                 final Payment retrievedPayment2 = paymentApi.getPayment(payment.getId(), true, false, ImmutableList.<PluginProperty>of(), callContext);
+                                                 Assert.assertEquals(retrievedPayment2.getTransactions().get(0).getTransactionStatus(), TransactionStatus.SUCCESS);
+
+                                                 // No thread switch, RO as well
+                                                 assertEquals(mockPaymentProviderPlugin.getLastThreadState(), THREAD_STATE.RO_ALLOWED);
+                                                 assertEquals(DBRouterUntyped.getCurrentState(), THREAD_STATE.RO_ALLOWED);
+                                                 return null;
+                                             }
+                                         });
+    }
 
     private List<PluginProperty> createPropertiesForInvoice(final Invoice invoice) {
         final List<PluginProperty> result = new ArrayList<PluginProperty>();
         result.add(new PluginProperty(InvoicePaymentControlPluginApi.PROP_IPCD_INVOICE_ID, invoice.getId().toString(), false));
         return result;
-    }
-
-    // I wish we had a simplest way to query our history rows..
-    private List<PaymentTransactionModelDao> getPaymentTransactionHistory(final String transactionExternalKey) {
-        return dbi.withHandle(new HandleCallback<List<PaymentTransactionModelDao>>() {
-            @Override
-            public List<PaymentTransactionModelDao> withHandle(final Handle handle) throws Exception {
-                final List<Map<String, Object>> queryResult = handle.select("select * from payment_transaction_history where transaction_external_key = ? order by record_id asc",
-                                                                            transactionExternalKey);
-                final List<PaymentTransactionModelDao> result = new ArrayList<PaymentTransactionModelDao>(queryResult.size());
-                for (final Map<String, Object> row : queryResult) {
-                    final PaymentTransactionModelDao transactionModelDao = new PaymentTransactionModelDao(UUID.fromString((String) row.get("id")),
-                                                                                                          null,
-                                                                                                          (String) row.get("transaction_external_key"),
-                                                                                                          null,
-                                                                                                          null,
-                                                                                                          UUID.fromString((String) row.get("payment_id")),
-                                                                                                          TransactionType.valueOf((String) row.get("transaction_type")),
-                                                                                                          null,
-                                                                                                          TransactionStatus.valueOf((String) row.get("transaction_status")),
-                                                                                                          (BigDecimal) row.get("amount"),
-                                                                                                          Currency.valueOf((String) row.get("currency")),
-                                                                                                          (String) row.get("gateway_error_code"),
-                                                                                                          String.valueOf(row.get("gateway_error_msg")));
-                    result.add(transactionModelDao);
-                }
-                return result;
-            }
-        });
     }
 
     private void assertNotificationsCompleted(final InternalCallContext internalCallContext, final long timeoutSec) {

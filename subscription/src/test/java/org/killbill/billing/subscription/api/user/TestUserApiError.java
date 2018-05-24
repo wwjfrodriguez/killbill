@@ -1,7 +1,7 @@
 /*
  * Copyright 2010-2013 Ning, Inc.
- * Copyright 2014-2017 Groupon, Inc
- * Copyright 2014-2017 The Billing Project, LLC
+ * Copyright 2014-2018 Groupon, Inc
+ * Copyright 2014-2018 The Billing Project, LLC
  *
  * The Billing Project licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -18,14 +18,11 @@
 
 package org.killbill.billing.subscription.api.user;
 
-import java.util.UUID;
-
 import javax.annotation.Nullable;
 
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 import org.killbill.billing.ErrorCode;
-import org.killbill.billing.api.FlakyRetryAnalyzer;
 import org.killbill.billing.api.TestApiListener.NextEvent;
 import org.killbill.billing.catalog.api.BillingActionPolicy;
 import org.killbill.billing.catalog.api.BillingPeriod;
@@ -48,72 +45,57 @@ public class TestUserApiError extends SubscriptionTestSuiteNoDB {
     @Test(groups = "fast")
     public void testCreateSubscriptionBadCatalog() {
         // WRONG PRODUCTS
-        tCreateSubscriptionInternal(bundle.getId(), null, BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.CAT_NULL_PRODUCT_NAME);
-        tCreateSubscriptionInternal(bundle.getId(), "Whatever", BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.CAT_NO_SUCH_PRODUCT);
+        tCreateSubscriptionInternal(bundle, null, BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.CAT_NULL_PRODUCT_NAME);
+        tCreateSubscriptionInternal(bundle, "Whatever", BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.CAT_NO_SUCH_PRODUCT);
 
         // TODO: MARTIN TO FIX WITH CORRECT ERROR CODE. RIGHT NOW NPE
 
         // WRONG BILLING PERIOD
-        tCreateSubscriptionInternal(bundle.getId(), "Shotgun", null, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.CAT_NULL_BILLING_PERIOD);
+        tCreateSubscriptionInternal(bundle, "Shotgun", null, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.CAT_NULL_BILLING_PERIOD);
         // WRONG PLAN SET
-        tCreateSubscriptionInternal(bundle.getId(), "Shotgun", BillingPeriod.ANNUAL, "Whatever", ErrorCode.CAT_PRICE_LIST_NOT_FOUND);
+        tCreateSubscriptionInternal(bundle, "Shotgun", BillingPeriod.ANNUAL, "Whatever", ErrorCode.CAT_PRICE_LIST_NOT_FOUND);
     }
 
     @Test(groups = "fast")
-    public void testCreateSubscriptionNoBundle() {
-        tCreateSubscriptionInternal(null, "Shotgun", BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_NO_BUNDLE);
+    public void testCreateSubscriptionNoBundle() throws SubscriptionBaseApiException {
+        testUtil.createSubscription(null, "Shotgun", BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME);
     }
 
     @Test(groups = "fast")
     public void testCreateSubscriptionNoBP() {
-        tCreateSubscriptionInternal(bundle.getId(), "Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_NO_BP);
-    }
-
-    @Test(groups = "fast")
-    public void testCreateSubscriptionBPExists() throws SubscriptionBaseApiException {
-        testUtil.createSubscription(bundle, "Shotgun", BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME);
-        tCreateSubscriptionInternal(bundle.getId(), "Shotgun", BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_BP_EXISTS);
+        tCreateSubscriptionInternal(bundle, "Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_NO_BP);
     }
 
     @Test(groups = "fast")
     public void testCreateSubscriptionAddOnNotAvailable() throws SubscriptionBaseApiException {
-        final SubscriptionBaseBundle aoBundle = subscriptionInternalApi.createBundleForAccount(bundle.getAccountId(), "myAOBundle", true, internalCallContext);
-        mockNonEntityDao.addTenantRecordIdMapping(aoBundle.getId(), internalCallContext);
-        mockNonEntityDao.addAccountRecordIdMapping(aoBundle.getId(), internalCallContext);
-
-        testUtil.createSubscriptionWithBundle(aoBundle.getId(), "Pistol", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, null);
-        tCreateSubscriptionInternal(aoBundle.getId(), "Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_AO_NOT_AVAILABLE);
+        testUtil.createSubscription(bundle, "Pistol", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME);
+        tCreateSubscriptionInternal(bundle, "Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_AO_NOT_AVAILABLE);
     }
 
     @Test(groups = "fast")
     public void testCreateSubscriptionAddOnIncluded() throws SubscriptionBaseApiException {
-        final SubscriptionBaseBundle aoBundle = subscriptionInternalApi.createBundleForAccount(bundle.getAccountId(), "myAOBundle", true, internalCallContext);
-        mockNonEntityDao.addTenantRecordIdMapping(aoBundle.getId(), internalCallContext);
-        mockNonEntityDao.addAccountRecordIdMapping(aoBundle.getId(), internalCallContext);
-
-        testUtil.createSubscriptionWithBundle(aoBundle.getId(), "Assault-Rifle", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, null);
-        tCreateSubscriptionInternal(aoBundle.getId(), "Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_AO_ALREADY_INCLUDED);
+        testUtil.createSubscription(bundle, "Assault-Rifle", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME);
+        tCreateSubscriptionInternal(bundle, "Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, ErrorCode.SUB_CREATE_AO_ALREADY_INCLUDED);
     }
 
-    private void tCreateSubscriptionInternal(@Nullable final UUID bundleId, @Nullable final String productName,
+    private void tCreateSubscriptionInternal(@Nullable final SubscriptionBaseBundle bundle, @Nullable final String productName,
                                              @Nullable final BillingPeriod term, final String planSet, final ErrorCode expected) {
         try {
-            subscriptionInternalApi.createSubscription(bundleId,
-                                                       testUtil.getProductSpecifier(productName, planSet, term, null),
-                                                       null, clock.getUTCNow(), false, internalCallContext);
+            testUtil.createSubscription(true, bundle, productName, term, planSet);
             Assert.fail("Exception expected, error code: " + expected);
         } catch (final SubscriptionBaseApiException e) {
             assertEquals(e.getCode(), expected.getCode());
         }
     }
 
-    // Flaky, see https://github.com/killbill/killbill/issues/860
-    @Test(groups = "fast", retryAnalyzer = FlakyRetryAnalyzer.class)
+    @Test(groups = "fast")
     public void testChangeSubscriptionNonActive() throws SubscriptionBaseApiException {
         final SubscriptionBase subscription = testUtil.createSubscription(bundle, "Shotgun", BillingPeriod.ANNUAL, PriceListSet.DEFAULT_PRICELIST_NAME);
 
         testListener.pushExpectedEvent(NextEvent.CANCEL);
         subscription.cancelWithDate(clock.getUTCNow(), callContext);
+        assertListenerStatus();
+
         try {
             subscription.changePlanWithDate(new PlanPhaseSpecifier("Pistol", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME), null, clock.getUTCNow(), callContext);
             Assert.fail("Exception expected, error code: " + ErrorCode.SUB_CHANGE_NON_ACTIVE);

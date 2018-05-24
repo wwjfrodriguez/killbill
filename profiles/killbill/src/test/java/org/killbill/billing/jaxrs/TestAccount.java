@@ -19,6 +19,7 @@
 package org.killbill.billing.jaxrs;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -29,6 +30,7 @@ import org.killbill.billing.ObjectType;
 import org.killbill.billing.catalog.api.Currency;
 import org.killbill.billing.client.KillBillClientException;
 import org.killbill.billing.client.model.Accounts;
+import org.killbill.billing.client.model.AuditLogs;
 import org.killbill.billing.client.model.CustomFields;
 import org.killbill.billing.client.model.InvoicePayments;
 import org.killbill.billing.client.model.PaymentMethods;
@@ -42,6 +44,7 @@ import org.killbill.billing.osgi.api.OSGIServiceRegistration;
 import org.killbill.billing.payment.plugin.api.PaymentPluginApi;
 import org.killbill.billing.payment.provider.MockPaymentProviderPlugin;
 import org.killbill.billing.util.api.AuditLevel;
+import org.killbill.billing.util.audit.ChangeType;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -52,6 +55,7 @@ import com.google.inject.Inject;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
@@ -65,12 +69,20 @@ public class TestAccount extends TestJaxrsBase {
 
     @BeforeMethod(groups = "slow")
     public void beforeMethod() throws Exception {
+        if (hasFailed()) {
+            return;
+        }
+
         super.beforeMethod();
         mockPaymentProviderPlugin = (MockPaymentProviderPlugin) registry.getServiceForName(PLUGIN_NAME);
     }
 
     @AfterMethod(groups = "slow")
     public void tearDown() throws Exception {
+        if (hasFailed()) {
+            return;
+        }
+
         mockPaymentProviderPlugin.clear();
     }
 
@@ -504,6 +516,72 @@ public class TestAccount extends TestJaxrsBase {
         final Accounts childrenAccounts = accountApi.getChildrenAccounts(UUID.randomUUID(), false, false, AuditLevel.NONE, requestOptions);
         Assert.assertEquals(childrenAccounts.size(), 0);
 
+    }
+    @Test(groups = "slow", description = "retrieve account logs")
+    public void testGetAccountAuditLogs() throws Exception {
+        final Account accountJson = createAccount();
+        assertNotNull(accountJson);
+
+        // generate more log data
+        final CustomFields customFields = new CustomFields();
+        customFields.add(new CustomField(null, accountJson.getAccountId(), ObjectType.ACCOUNT, "1", "value1", null));
+        customFields.add(new CustomField(null, accountJson.getAccountId(), ObjectType.ACCOUNT, "2", "value2", null));
+        customFields.add(new CustomField(null, accountJson.getAccountId(), ObjectType.ACCOUNT, "3", "value3", null));
+
+        accountApi.createAccountCustomFields(accountJson.getAccountId(), customFields, requestOptions);
+
+        final CustomFields accountCustomFields = accountApi.getAccountCustomFields(accountJson.getAccountId(), requestOptions);
+        assertEquals(accountCustomFields.size(), 3);
+
+        final AuditLogs auditLogsJson = accountApi.getAccountAuditLogs(accountJson.getAccountId(), requestOptions);
+        assertEquals(auditLogsJson.size(), 4);
+        assertEquals(auditLogsJson.get(0).getChangeType(), ChangeType.INSERT.toString());
+        assertEquals(auditLogsJson.get(0).getObjectType(), ObjectType.ACCOUNT);
+        assertEquals(auditLogsJson.get(0).getObjectId(), accountJson.getAccountId());
+
+        assertEquals(auditLogsJson.get(1).getChangeType(), ChangeType.INSERT.toString());
+        assertEquals(auditLogsJson.get(1).getObjectType(), ObjectType.CUSTOM_FIELD);
+        assertEquals(auditLogsJson.get(1).getObjectId(), accountCustomFields.get(0).getCustomFieldId());
+
+        assertEquals(auditLogsJson.get(2).getChangeType(), ChangeType.INSERT.toString());
+        assertEquals(auditLogsJson.get(2).getObjectType(), ObjectType.CUSTOM_FIELD);
+        assertEquals(auditLogsJson.get(2).getObjectId(), accountCustomFields.get(1).getCustomFieldId());
+
+        assertEquals(auditLogsJson.get(3).getChangeType(), ChangeType.INSERT.toString());
+        assertEquals(auditLogsJson.get(3).getObjectType(), ObjectType.CUSTOM_FIELD);
+        assertEquals(auditLogsJson.get(3).getObjectId(), accountCustomFields.get(2).getCustomFieldId());
+    }
+
+    @Test(groups = "slow", description = "retrieve account logs")
+    public void testGetAccountAuditLogsWithHistory() throws Exception {
+        final Account accountJson = createAccount();
+        assertNotNull(accountJson);
+
+        // Update Account
+        final Account newInput = new Account()
+                .setAccountId(accountJson.getAccountId())
+                .setExternalKey(accountJson.getExternalKey())
+                .setName("zozo");
+
+
+        accountApi.updateAccount(accountJson.getAccountId(), newInput, requestOptions);
+
+        final List<AuditLog> auditLogWithHistories = accountApi.getAccountAuditLogsWithHistory(accountJson.getAccountId(), requestOptions);
+        assertEquals(auditLogWithHistories.size(), 2);
+        assertEquals(auditLogWithHistories.get(0).getChangeType(), ChangeType.INSERT.toString());
+        assertEquals(auditLogWithHistories.get(0).getObjectType(), ObjectType.ACCOUNT);
+        assertEquals(auditLogWithHistories.get(0).getObjectId(), accountJson.getAccountId());
+
+        final LinkedHashMap<String, Object> history1 = (LinkedHashMap<String, Object>) auditLogWithHistories.get(0).getHistory();
+        assertNotNull(history1);
+        assertEquals(history1.get("externalKey"), accountJson.getExternalKey());
+        assertEquals(history1.get("name"), accountJson.getName());
+
+        final LinkedHashMap history2 = (LinkedHashMap) auditLogWithHistories.get(1).getHistory();
+        assertNotNull(history2);
+        assertEquals(history2.get("externalKey"), accountJson.getExternalKey());
+        assertNotEquals(history2.get("name"), accountJson.getName());
+        assertEquals(history2.get("name"), "zozo");
     }
 
 }

@@ -48,10 +48,14 @@ public class TestKillbillJdbcTenantRealm extends TestJaxrsBase {
     @Override
     @BeforeMethod(groups = "slow")
     public void beforeMethod() throws Exception {
+        if (hasFailed()) {
+            return;
+        }
+
         super.beforeMethod();
 
         // Create the tenant
-        final DefaultTenantDao tenantDao = new DefaultTenantDao(dbi, roDbi, clock, cacheControllerDispatcher, new DefaultNonEntityDao(dbi), Mockito.mock(InternalCallContextFactory.class), securityConfig);
+        final DefaultTenantDao tenantDao = new DefaultTenantDao(dbi, roDbi, clock, cacheControllerDispatcher, new DefaultNonEntityDao(dbi, roDbi), Mockito.mock(InternalCallContextFactory.class), securityConfig);
         tenant = new DefaultTenant(UUID.randomUUID(), null, null, UUID.randomUUID().toString(),
                                    UUID.randomUUID().toString(), UUID.randomUUID().toString());
         tenantDao.create(new TenantModelDao(tenant), internalCallContext);

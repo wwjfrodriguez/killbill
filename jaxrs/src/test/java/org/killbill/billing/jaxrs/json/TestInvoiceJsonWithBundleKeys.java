@@ -84,8 +84,9 @@ public class TestInvoiceJsonWithBundleKeys extends JaxrsTestSuiteNoDB {
         Mockito.when(invoice.getCreditedAmount()).thenReturn(BigDecimal.ONE);
         Mockito.when(invoice.getRefundedAmount()).thenReturn(BigDecimal.ONE);
         Mockito.when(invoice.getId()).thenReturn(UUID.randomUUID());
-        Mockito.when(invoice.getInvoiceDate()).thenReturn(clock.getUTCToday());
-        Mockito.when(invoice.getTargetDate()).thenReturn(clock.getUTCToday());
+        final LocalDate utcToday = clock.getUTCToday();
+        Mockito.when(invoice.getInvoiceDate()).thenReturn(utcToday);
+        Mockito.when(invoice.getTargetDate()).thenReturn(utcToday);
         Mockito.when(invoice.getInvoiceNumber()).thenReturn(Integer.MAX_VALUE);
         Mockito.when(invoice.getBalance()).thenReturn(BigDecimal.ZERO);
         Mockito.when(invoice.getAccountId()).thenReturn(UUID.randomUUID());
@@ -114,11 +115,12 @@ public class TestInvoiceJsonWithBundleKeys extends JaxrsTestSuiteNoDB {
 
     private CreditJson createCreditJson() {
         final BigDecimal creditAmount = BigDecimal.TEN;
+        final UUID creditId = UUID.randomUUID();
         final Currency currency = Currency.USD;
         final UUID invoiceId = UUID.randomUUID();
         final String invoiceNumber = UUID.randomUUID().toString();
         final LocalDate effectiveDate = clock.getUTCToday();
         final UUID accountId = UUID.randomUUID();
-        return new CreditJson(creditAmount, currency, invoiceId, invoiceNumber, effectiveDate,  accountId, null, null, null);
+        return new CreditJson(creditId, creditAmount, currency, invoiceId, invoiceNumber, effectiveDate,  accountId, null, null, null);
     }
 }

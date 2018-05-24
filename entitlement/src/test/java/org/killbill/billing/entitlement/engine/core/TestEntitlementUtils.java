@@ -1,7 +1,7 @@
 /*
  * Copyright 2010-2013 Ning, Inc.
- * Copyright 2014-2016 Groupon, Inc
- * Copyright 2014-2016 The Billing Project, LLC
+ * Copyright 2014-2018 Groupon, Inc
+ * Copyright 2014-2018 The Billing Project, LLC
  *
  * The Billing Project licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -31,7 +31,6 @@ import org.killbill.billing.api.TestApiListener.NextEvent;
 import org.killbill.billing.catalog.api.BillingActionPolicy;
 import org.killbill.billing.catalog.api.BillingPeriod;
 import org.killbill.billing.catalog.api.PlanPhaseSpecifier;
-import org.killbill.billing.catalog.api.PlanSpecifier;
 import org.killbill.billing.catalog.api.PriceListSet;
 import org.killbill.billing.entitlement.AccountEventsStreams;
 import org.killbill.billing.entitlement.EntitlementService;
@@ -66,6 +65,9 @@ public class TestEntitlementUtils extends EntitlementTestSuiteWithEmbeddedDB {
 
     @BeforeMethod(groups = "slow")
     public void setUp() throws Exception {
+        if (hasFailed()) {
+            return;
+        }
         clock.setDay(initialDate);
         final Account account = createAccount(getAccountData(7));
 
@@ -73,14 +75,16 @@ public class TestEntitlementUtils extends EntitlementTestSuiteWithEmbeddedDB {
         // Create base entitlement
         testListener.pushExpectedEvents(NextEvent.CREATE, NextEvent.BLOCK);
         final PlanPhaseSpecifier baseSpec = new PlanPhaseSpecifier("Shotgun", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, null);
-        baseEntitlement = (DefaultEntitlement) entitlementApi.createBaseEntitlement(account.getId(), baseSpec, account.getExternalKey(), null, null, null, false, true, ImmutableList.<PluginProperty>of(), callContext);
+        final UUID baseEntitlementId = entitlementApi.createBaseEntitlement(account.getId(), baseSpec, account.getExternalKey(), null, null, null, false, true, ImmutableList.<PluginProperty>of(), callContext);
         assertListenerStatus();
+        baseEntitlement = (DefaultEntitlement) entitlementApi.getEntitlementForId(baseEntitlementId, callContext);
 
         // Add ADD_ON
         testListener.pushExpectedEvents(NextEvent.CREATE, NextEvent.BLOCK);
         final PlanPhaseSpecifier addOnSpec = new PlanPhaseSpecifier("Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, null);
-        addOnEntitlement = (DefaultEntitlement) entitlementApi.addEntitlement(baseEntitlement.getBundleId(), addOnSpec, null, initialDate, initialDate, false, ImmutableList.<PluginProperty>of(), callContext);
+        final UUID addOnEntitlementId = entitlementApi.addEntitlement(baseEntitlement.getBundleId(), addOnSpec, null, null, null, false, ImmutableList.<PluginProperty>of(), callContext);
         assertListenerStatus();
+        addOnEntitlement = (DefaultEntitlement) entitlementApi.getEntitlementForId(addOnEntitlementId, callContext);
 
         // Verify the initial state
         checkFutureBlockingStatesToCancel(baseEntitlement, null, null);
@@ -267,7 +271,7 @@ public class TestEntitlementUtils extends EntitlementTestSuiteWithEmbeddedDB {
         // Add a second ADD_ON (Laser-Scope is available, not included)
         testListener.pushExpectedEvents(NextEvent.CREATE, NextEvent.BLOCK);
         final PlanPhaseSpecifier secondAddOnSpec = new PlanPhaseSpecifier("Laser-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, null);
-        final DefaultEntitlement secondAddOnEntitlement = (DefaultEntitlement) entitlementApi.addEntitlement(baseEntitlement.getBundleId(), secondAddOnSpec, null, clock.getUTCToday(), clock.getUTCToday(), false, ImmutableList.<PluginProperty>of(), callContext);
+        final UUID secondAddOnEntitlementId = entitlementApi.addEntitlement(baseEntitlement.getBundleId(), secondAddOnSpec, null, clock.getUTCToday(), clock.getUTCToday(), false, ImmutableList.<PluginProperty>of(), callContext);
         assertListenerStatus();
 
         // Change plan EOT to Assault-Rifle (Telescopic-Scope is included)
@@ -278,7 +282,7 @@ public class TestEntitlementUtils extends EntitlementTestSuiteWithEmbeddedDB {
         // Verify the blocking states DAO adds events not on disk for the first add-on...
         checkBlockingStatesDAO(changedBaseEntitlement, addOnEntitlement, baseEffectiveCancellationOrChangeDate, false);
         // ...but not for the second one
-        final List<BlockingState> blockingStatesForSecondAddOn = blockingStatesForBlockedId(secondAddOnEntitlement.getId());
+        final List<BlockingState> blockingStatesForSecondAddOn = blockingStatesForBlockedId(secondAddOnEntitlementId);
         Assert.assertEquals(blockingStatesForSecondAddOn.size(), 1);
     }
 
@@ -326,8 +330,9 @@ public class TestEntitlementUtils extends EntitlementTestSuiteWithEmbeddedDB {
         // Add a second ADD_ON
         testListener.pushExpectedEvents(NextEvent.CREATE, NextEvent.BLOCK, NextEvent.PHASE);
         final PlanPhaseSpecifier addOn2Spec = new PlanPhaseSpecifier("Telescopic-Scope", BillingPeriod.MONTHLY, PriceListSet.DEFAULT_PRICELIST_NAME, null);
-        final Entitlement addOn2Entitlement = entitlementApi.addEntitlement(baseEntitlement.getBundleId(), addOn2Spec, null, initialDate, initialDate, false, ImmutableList.<PluginProperty>of(), callContext);
+        final UUID addOn2EntitlementId = entitlementApi.addEntitlement(baseEntitlement.getBundleId(), addOn2Spec, null, initialDate, initialDate, false, ImmutableList.<PluginProperty>of(), callContext);
         assertListenerStatus();
+        final Entitlement addOn2Entitlement = entitlementApi.getEntitlementForId(addOn2EntitlementId, callContext);
 
         // Date prior to the base cancellation date to verify it is not impacted by the base cancellation (in contrary to the second add-on)
         final LocalDate addOn1CancellationDate = new LocalDate(2013, 9, 9);
@@ -483,7 +488,7 @@ public class TestEntitlementUtils extends EntitlementTestSuiteWithEmbeddedDB {
     }
 
     private List<BlockingState> blockingStatesForBlockedId(final UUID blockedId) {
-        return ImmutableList.<BlockingState>copyOf(Iterables.<BlockingState>filter(blockingStateDao.getBlockingAllForAccountRecordId(internalCallContext),
+        return ImmutableList.<BlockingState>copyOf(Iterables.<BlockingState>filter(blockingStateDao.getBlockingAllForAccountRecordId(catalog, internalCallContext),
                                                                                    new Predicate<BlockingState>() {
                                                                                        @Override
                                                                                        public boolean apply(final BlockingState input) {
